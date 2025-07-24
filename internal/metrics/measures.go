@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"context"
+	"time"
 
 	"github.com/launchdarkly/ld-relay/v8/internal/logging"
 
@@ -27,6 +28,10 @@ var (
 	privateConnMeasure            = stats.Int64(privateConnMeasureName, "current number of connections", stats.UnitDimensionless)
 	privateNewConnMeasure         = stats.Int64(privateNewConnMeasureName, "total number of connections", stats.UnitDimensionless)
 	privatePollingRequestsMeasure = stats.Int64(privatePollingRequestsMeasureName, "total number of polling requests made", stats.UnitDimensionless)
+
+	// New measures for latency and errors
+	requestLatencyMeasure = stats.Float64(requestLatencyMeasureName, "request latency in milliseconds", stats.UnitMilliseconds)
+	requestErrorsMeasure  = stats.Int64(requestErrorsMeasureName, "number of request errors", stats.UnitDimensionless)
 
 	// BrowserConns is a Measure representing the current number of active stream connections from browsers.
 	BrowserConns = Measure{measures: []*stats.Int64Measure{connMeasure, privateConnMeasure}, tags: makeBrowserTags()}
@@ -57,11 +62,26 @@ var (
 
 	// PollingRequests is a Measure representing the total number of polling style requests received from server-side SDKs.
 	PollingRequests = Measure{measures: []*stats.Int64Measure{privatePollingRequestsMeasure}, tags: makeServerTags()}
+
+	// New latency and error measures for each platform
+	BrowserLatency = Float64Measure{measures: []*stats.Float64Measure{requestLatencyMeasure}, tags: makeBrowserTags()}
+	MobileLatency  = Float64Measure{measures: []*stats.Float64Measure{requestLatencyMeasure}, tags: makeMobileTags()}
+	ServerLatency  = Float64Measure{measures: []*stats.Float64Measure{requestLatencyMeasure}, tags: makeServerTags()}
+
+	BrowserErrors = Measure{measures: []*stats.Int64Measure{requestErrorsMeasure}, tags: makeBrowserTags()}
+	MobileErrors  = Measure{measures: []*stats.Int64Measure{requestErrorsMeasure}, tags: makeMobileTags()}
+	ServerErrors  = Measure{measures: []*stats.Int64Measure{requestErrorsMeasure}, tags: makeServerTags()}
 )
 
 // Measure represents one of the types of metrics that can be passed to WithCount, WithGauge, or WithRouteCount.
 type Measure struct {
 	measures []*stats.Int64Measure
+	tags     []tag.Mutator
+}
+
+// Float64Measure represents a Float64 metric measure.
+type Float64Measure struct {
+	measures []*stats.Float64Measure
 	tags     []tag.Mutator
 }
 
@@ -119,4 +139,49 @@ func WithRouteCount(ctx context.Context, userAgent, route, method string, f func
 	defer span.End()
 
 	WithCount(ctx, userAgent, f, measure)
+}
+
+// WithLatency records the latency of a function execution in milliseconds.
+func WithLatency(ctx context.Context, userAgent string, f func(), measure Float64Measure) {
+	ctx, err := tag.New(ctx, tag.Insert(userAgentTagKey, sanitizeTagValue(userAgent)))
+	if err != nil { // COVERAGE: can't make this happen in unit tests
+		logging.GetGlobalContextLoggers(ctx).Errorf(`Failed to create tags: %s`, err)
+	} else {
+		start := time.Now()
+		defer func() {
+			duration := time.Since(start)
+			for _, m := range measure.measures {
+				ctx, _ := tag.New(ctx, measure.tags...)
+				stats.Record(ctx, m.M(float64(duration.Milliseconds())))
+			}
+		}()
+	}
+	f()
+}
+
+// WithRouteLatency records the latency of a route execution and starts a trace.
+func WithRouteLatency(ctx context.Context, userAgent, route, method string, f func(), measure Float64Measure) {
+	tagCtx, err := tag.New(ctx, tag.Insert(routeTagKey, sanitizeTagValue(route)), tag.Insert(methodTagKey, sanitizeTagValue(method)))
+	if err != nil { // COVERAGE: can't make this happen in unit tests
+		logging.GetGlobalContextLoggers(ctx).Errorf(`Failed to create tags for route "%s %s": %s`, method, route, err)
+	} else {
+		ctx = tagCtx
+	}
+	ctx, span := trace.StartSpan(ctx, route)
+	defer span.End()
+
+	WithLatency(ctx, userAgent, f, measure)
+}
+
+// RecordError records an error occurrence for the specified metric.
+func RecordError(ctx context.Context, userAgent string, measure Measure) {
+	ctx, err := tag.New(ctx, tag.Insert(userAgentTagKey, sanitizeTagValue(userAgent)))
+	if err != nil { // COVERAGE: can't make this happen in unit tests
+		logging.GetGlobalContextLoggers(ctx).Errorf(`Failed to create tags: %s`, err)
+	} else {
+		for _, m := range measure.measures {
+			ctx, _ := tag.New(ctx, measure.tags...)
+			stats.Record(ctx, m.M(1))
+		}
+	}
 }

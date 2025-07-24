@@ -65,3 +65,49 @@ func RequestCount(measure metrics.Measure) mux.MiddlewareFunc {
 		})
 	}
 }
+
+// RequestLatency is a middleware function that records the latency of requests.
+func RequestLatency(measure metrics.Float64Measure) mux.MiddlewareFunc {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			ctx := GetEnvContextInfo(req.Context())
+			userAgent := getUserAgent(req)
+			// Ignoring internal routing error that would have been ignored anyway
+			route, _ := mux.CurrentRoute(req).GetPathTemplate()
+			metrics.WithRouteLatency(ctx.Env.GetMetricsContext(), userAgent, route, req.Method, func() {
+				next.ServeHTTP(w, req)
+			}, measure)
+		})
+	}
+}
+
+// RequestErrors is a middleware function that records errors based on HTTP status codes.
+func RequestErrors(measure metrics.Measure) mux.MiddlewareFunc {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			ctx := GetEnvContextInfo(req.Context())
+			userAgent := getUserAgent(req)
+			
+			// Create a response writer wrapper to capture the status code
+			wrappedWriter := &responseWriter{ResponseWriter: w, statusCode: 200}
+			
+			next.ServeHTTP(wrappedWriter, req)
+			
+			// Record error if status code indicates an error (4xx or 5xx)
+			if wrappedWriter.statusCode >= 400 {
+				metrics.RecordError(ctx.Env.GetMetricsContext(), userAgent, measure)
+			}
+		})
+	}
+}
+
+// responseWriter wraps http.ResponseWriter to capture the status code
+type responseWriter struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (rw *responseWriter) WriteHeader(code int) {
+	rw.statusCode = code
+	rw.ResponseWriter.WriteHeader(code)
+}

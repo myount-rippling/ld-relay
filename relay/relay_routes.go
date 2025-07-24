@@ -50,6 +50,8 @@ func (r *Relay) makeRouter() *mux.Router {
 			middleware.CORS,  // must apply this after jsClientSelector because the CORS headers can be environment-specific
 			middleware.UsageActivityCount(metrics.BrowserPlatformCategory),
 			middleware.RequestCount(metrics.BrowserRequests),
+			middleware.RequestLatency(metrics.BrowserLatency),
+			middleware.RequestErrors(metrics.BrowserErrors),
 		)
 	}
 
@@ -68,6 +70,8 @@ func (r *Relay) makeRouter() *mux.Router {
 		sdkKeySelector,
 		middleware.UsageActivityCount(metrics.ServerPlatformCategory),
 		middleware.RequestCount(metrics.ServerRequests),
+		middleware.RequestLatency(metrics.ServerLatency),
+		middleware.RequestErrors(metrics.ServerErrors),
 	)
 
 	serverSideSdkRouter := router.PathPrefix("/sdk/").Subrouter()
@@ -92,7 +96,9 @@ func (r *Relay) makeRouter() *mux.Router {
 	mobileMiddlewareStack := middleware.Chain(
 		mobileKeySelector,
 		middleware.UsageActivityCount(metrics.MobilePlatformCategory),
-		middleware.RequestCount(metrics.MobileRequests))
+		middleware.RequestCount(metrics.MobileRequests),
+		middleware.RequestLatency(metrics.MobileLatency),
+		middleware.RequestErrors(metrics.MobileErrors))
 
 	msdkRouter := router.PathPrefix("/msdk/").Subrouter()
 	msdkRouter.Use(mobileMiddlewareStack)

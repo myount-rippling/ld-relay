@@ -23,6 +23,10 @@ const (
 
 	requestMeasureName = "requests"
 
+	// New metrics for latency and errors
+	requestLatencyMeasureName = "request_latency"
+	requestErrorsMeasureName  = "request_errors"
+
 	defaultFlushInterval = time.Minute
 
 	BrowserPlatformCategory = "browser"

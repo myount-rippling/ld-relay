@@ -169,3 +169,132 @@ func testCountRequests(t *testing.T, measure metrics.Measure, category string) {
 		})
 	})
 }
+
+func TestRequestLatency(t *testing.T) {
+	t.Run("browser", func(t *testing.T) {
+		testRequestLatency(t, metrics.BrowserLatency, "browser")
+	})
+	t.Run("mobile", func(t *testing.T) {
+		testRequestLatency(t, metrics.MobileLatency, "mobile")
+	})
+	t.Run("server", func(t *testing.T) {
+		testRequestLatency(t, metrics.ServerLatency, "server")
+	})
+}
+
+func testRequestLatency(t *testing.T, measure metrics.Float64Measure, category string) {
+	// We need to build a router here because RequestLatency expects mux.CurrentRoute() to work.
+	router := mux.NewRouter()
+	router.Use(RequestLatency(measure))
+	router.Handle("/test-route", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Simulate some processing time
+		time.Sleep(10 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	})).Methods("GET")
+
+	metricsMiddlewareTest(t, func(p metricsMiddlewareTestParams) {
+		expectedTags := map[string]string{
+			"env":              p.envName,
+			"method":           "GET",
+			"route":            "_test-route",
+			"platformCategory": category,
+			"userAgent":        metricsTestUserAgent,
+		}
+
+		makeRequest := func() *http.Request {
+			req, _ := http.NewRequest("GET", "/test-route", nil)
+			req.Header.Set("User-Agent", metricsTestUserAgent)
+			return req.WithContext(WithEnvContextInfo(req.Context(), EnvContextInfo{Env: p.env}))
+		}
+
+		router.ServeHTTP(httptest.NewRecorder(), makeRequest())
+
+		p.exporter.AwaitData(t, time.Second, p.mockLog.Loggers, func(d st.TestMetricsData) bool {
+			return d.HasRow("request_latency", st.TestMetricsRow{
+				Tags: expectedTags,
+				Sum:  10, // Should be around 10ms
+			})
+		})
+	})
+}
+
+func TestRequestErrors(t *testing.T) {
+	t.Run("browser", func(t *testing.T) {
+		testRequestErrors(t, metrics.BrowserErrors, "browser")
+	})
+	t.Run("mobile", func(t *testing.T) {
+		testRequestErrors(t, metrics.MobileErrors, "mobile")
+	})
+	t.Run("server", func(t *testing.T) {
+		testRequestErrors(t, metrics.ServerErrors, "server")
+	})
+}
+
+func testRequestErrors(t *testing.T, measure metrics.Measure, category string) {
+	// We need to build a router here because RequestErrors expects mux.CurrentRoute() to work.
+	router := mux.NewRouter()
+	router.Use(RequestErrors(measure))
+	
+	// Handler that returns an error status
+	errorHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	
+	// Handler that returns success
+	successHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	
+	router.Handle("/error-route", errorHandler).Methods("GET")
+	router.Handle("/success-route", successHandler).Methods("GET")
+
+	metricsMiddlewareTest(t, func(p metricsMiddlewareTestParams) {
+		expectedErrorTags := map[string]string{
+			"env":              p.envName,
+			"method":           "GET",
+			"route":            "_error-route",
+			"platformCategory": category,
+			"userAgent":        metricsTestUserAgent,
+		}
+
+		expectedSuccessTags := map[string]string{
+			"env":              p.envName,
+			"method":           "GET",
+			"route":            "_success-route",
+			"platformCategory": category,
+			"userAgent":        metricsTestUserAgent,
+		}
+
+		makeRequest := func(path string) *http.Request {
+			req, _ := http.NewRequest("GET", path, nil)
+			req.Header.Set("User-Agent", metricsTestUserAgent)
+			return req.WithContext(WithEnvContextInfo(req.Context(), EnvContextInfo{Env: p.env}))
+		}
+
+		// Test error route - should record an error
+		router.ServeHTTP(httptest.NewRecorder(), makeRequest("/error-route"))
+
+		p.exporter.AwaitData(t, time.Second, p.mockLog.Loggers, func(d st.TestMetricsData) bool {
+			return d.HasRow("request_errors", st.TestMetricsRow{
+				Tags:  expectedErrorTags,
+				Count: 1,
+			})
+		})
+
+		// Test success route - should not record an error
+		router.ServeHTTP(httptest.NewRecorder(), makeRequest("/success-route"))
+
+		// Wait a bit and verify no additional errors were recorded
+		time.Sleep(50 * time.Millisecond)
+		p.exporter.AwaitData(t, time.Second, p.mockLog.Loggers, func(d st.TestMetricsData) bool {
+			// Should still only have 1 error from the error route
+			return d.HasRow("request_errors", st.TestMetricsRow{
+				Tags:  expectedErrorTags,
+				Count: 1,
+			}) && !d.HasRow("request_errors", st.TestMetricsRow{
+				Tags:  expectedSuccessTags,
+				Count: 1,
+			})
+		})
+	})
+}
