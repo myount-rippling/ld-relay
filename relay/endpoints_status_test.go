@@ -55,6 +55,12 @@ func TestEndpointsStatus(t *testing.T) {
 			st.AssertJSONPathMatch(t, "healthy", status, "status")
 			st.AssertJSONPathMatch(t, p.relay.version, status, "version")
 			st.AssertJSONPathMatch(t, ld.Version, status, "clientVersion")
+
+			// Verify that TotalFlags is populated correctly in DataStoreStatus
+			// The test data includes 8 flags (see sharedtest/testdata_flags.go)
+			st.AssertJSONPathMatch(t, float64(8), status, "environments", st.EnvMain.Name, "dataStoreStatus", "totalFlags")
+			st.AssertJSONPathMatch(t, float64(8), status, "environments", st.EnvClientSide.Name, "dataStoreStatus", "totalFlags")
+			st.AssertJSONPathMatch(t, float64(8), status, "environments", st.EnvMobile.Name, "dataStoreStatus", "totalFlags")
 		})
 	})
 

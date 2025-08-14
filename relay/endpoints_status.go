@@ -13,6 +13,7 @@ import (
 	"github.com/launchdarkly/go-sdk-common/v3/ldtime"
 	ld "github.com/launchdarkly/go-server-sdk/v7"
 	"github.com/launchdarkly/go-server-sdk/v7/interfaces"
+	"github.com/launchdarkly/go-server-sdk/v7/subsystems/ldstoreimpl"
 )
 
 const (
@@ -95,6 +96,14 @@ func statusHandler(relay *Relay) http.Handler {
 				status.DataStoreStatus.StateSince = ldtime.UnixMillisFromTime(storeStatus.LastUpdated)
 				if !storeStatus.Available {
 					status.DataStoreStatus.State = "INTERRUPTED"
+				}
+
+				// Get total number of flags
+				store := clientCtx.GetStore()
+				if store != nil && store.IsInitialized() {
+					if flags, err := store.GetAll(ldstoreimpl.Features()); err == nil {
+						status.DataStoreStatus.TotalFlags = len(flags)
+					}
 				}
 
 				if connected {

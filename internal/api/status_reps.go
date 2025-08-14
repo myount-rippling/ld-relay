@@ -65,6 +65,7 @@ type ConnectionErrorRep struct {
 type DataStoreStatusRep struct {
 	State      string                     `json:"state"`
 	StateSince ldtime.UnixMillisecondTime `json:"stateSince"`
+	TotalFlags int                        `json:"totalFlags"`
 	Database   string                     `json:"database,omitempty"`
 	DBServer   string                     `json:"dbServer,omitempty"`
 	DBPrefix   string                     `json:"dbPrefix,omitempty"`
